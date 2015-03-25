@@ -238,9 +238,16 @@ func TestTotalMemory(t *testing.T) {
 func TestTotalCpus(t *testing.T) {
 	node := NewNode("test", 0.05)
 	node.Cpus = 2
-	assert.Equal(t, node.TotalCpus(), 2+2*5/100)
+	assert.Equal(t, node.TotalCpus(), float64(node.Cpus)+float64(node.Cpus)*5/100)
 
 	node = NewNode("test", 0)
 	node.Cpus = 2
 	assert.Equal(t, node.TotalCpus(), 2)
+}
+
+func TestTotalCpuShares(t *testing.T) {
+	node := NewNode("test", 0.05)
+	assert.Equal(t, node.TotalCpuShares(), 1024+1024*5/100)
+	node = NewNode("test", 0)
+	assert.Equal(t, node.TotalCpuShares(), 1024)
 }

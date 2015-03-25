@@ -14,8 +14,9 @@ type Node interface {
 	Containers() []*Container             //used by the filters
 	Container(IdOrName string) *Container //used by the filters
 
-	TotalCpus() int64   //used by the strategy
-	UsedCpus() int64    //used by the strategy
+	TotalCpus() float64 //used by the strategy
+	GetCpus() int64     //used by the strategy
+	UsedCpus() float64  //used by the strategy
 	TotalMemory() int64 //used by the strategy
 	UsedMemory() int64  //used by the strategy
 
