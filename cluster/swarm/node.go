@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"container/list"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -22,7 +23,6 @@ const (
 	requestTimeout = 10 * time.Second
 )
 
-// NewNode is exported
 func NewNode(addr string, overcommitRatio float64) *node {
 	e := &node{
 		addr:            addr,
@@ -31,6 +31,7 @@ func NewNode(addr string, overcommitRatio float64) *node {
 		containers:      make(map[string]*cluster.Container),
 		healthy:         true,
 		overcommitRatio: int64(overcommitRatio * 100),
+		scheduleQueue:   list.New(),
 	}
 	return e
 }
@@ -38,13 +39,14 @@ func NewNode(addr string, overcommitRatio float64) *node {
 type node struct {
 	sync.RWMutex
 
-	id     string
-	ip     string
-	addr   string
-	name   string
-	Cpus   int64
-	Memory int64
-	labels map[string]string
+	id            string
+	ip            string
+	addr          string
+	name          string
+	Cpus          int64
+	Memory        int64
+	labels        map[string]string
+	scheduleQueue *list.List
 
 	ch              chan bool
 	containers      map[string]*cluster.Container
@@ -53,6 +55,12 @@ type node struct {
 	eventHandler    cluster.EventHandler
 	healthy         bool
 	overcommitRatio int64
+}
+
+//more items need to be added here right now works only for affinities and constraints
+type scheduledItem struct {
+	image     string
+	container string
 }
 
 func (n *node) ID() string {
@@ -264,8 +272,6 @@ func (n *node) updateContainer(c dockerclient.Container, containers map[string]*
 			return nil, err
 		}
 		container.Info = *info
-		// real CpuShares -> nb of CPUs
-		container.Info.Config.CpuShares = container.Info.Config.CpuShares * 1024.0 / n.Cpus
 	}
 
 	return containers, nil
@@ -338,14 +344,14 @@ func (n *node) UsedMemory() int64 {
 }
 
 // Return the sum of CPUs reserved by containers.
-func (n *node) UsedCpus() int64 {
+func (n *node) UsedCpus() float64 {
 	var r int64
 	n.RLock()
 	for _, c := range n.containers {
 		r += c.Info.Config.CpuShares
 	}
 	n.RUnlock()
-	return r
+	return float64(r*n.Cpus) / 1024
 }
 
 func (n *node) TotalMemory() int64 {
@@ -353,7 +359,40 @@ func (n *node) TotalMemory() int64 {
 }
 
 func (n *node) TotalCpus() int64 {
-	return n.Cpus + (n.Cpus * n.overcommitRatio / 100)
+	return n.Cpus
+}
+
+func (n *node) addtoQueue(config *dockerclient.ContainerConfig, name string) {
+	item := &scheduledItem{
+		image:     config.Image,
+		container: name,
+	}
+	n.scheduleQueue.PushFront(*item)
+}
+
+func (n *node) removeFromQueue(config *dockerclient.ContainerConfig, name string) {
+	for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
+		if e.Value.(*scheduledItem).container == name && e.Value.(*scheduledItem).image == config.Image {
+			n.scheduleQueue.Remove(e)
+		}
+	}
+}
+
+func (n *node) ScheduledList(query string) []string {
+	candidate := make([]string, 1)
+	if query == "container" {
+		for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
+			candidate = append(candidate, e.Value.(*scheduledItem).container)
+		}
+		return candidate
+	}
+	if query == "image" {
+		for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
+			candidate = append(candidate, e.Value.(*scheduledItem).image)
+		}
+		return candidate
+	}
+	return nil
 }
 
 func (n *node) create(config *dockerclient.ContainerConfig, name string, pullImage bool) (*cluster.Container, error) {
@@ -366,7 +405,7 @@ func (n *node) create(config *dockerclient.ContainerConfig, name string, pullIma
 	newConfig := *config
 
 	// nb of CPUs -> real CpuShares
-	newConfig.CpuShares = config.CpuShares * 1024 / n.Cpus
+	newConfig.CpuShares = config.CpuShares
 
 	if id, err = client.CreateContainer(&newConfig, name); err != nil {
 		// If the error is other than not found, abort immediately.
@@ -389,6 +428,7 @@ func (n *node) create(config *dockerclient.ContainerConfig, name string, pullIma
 
 	n.RLock()
 	defer n.RUnlock()
+	defer n.removeFromQueue(config, name)
 
 	return n.containers[id], nil
 }
@@ -438,10 +478,10 @@ func (n *node) Containers() []*cluster.Container {
 	return containers
 }
 
-// Container returns the container with IDOrName in the node.
-func (n *node) Container(IDOrName string) *cluster.Container {
+// Container returns the container with IdOrName in the node.
+func (n *node) Container(IdOrName string) *cluster.Container {
 	// Abort immediately if the name is empty.
-	if len(IDOrName) == 0 {
+	if len(IdOrName) == 0 {
 		return nil
 	}
 
@@ -450,13 +490,13 @@ func (n *node) Container(IDOrName string) *cluster.Container {
 
 	for _, container := range n.Containers() {
 		// Match ID prefix.
-		if strings.HasPrefix(container.Id, IDOrName) {
+		if strings.HasPrefix(container.Id, IdOrName) {
 			return container
 		}
 
 		// Match name, /name or engine/name.
 		for _, name := range container.Names {
-			if name == IDOrName || name == "/"+IDOrName || container.Node.ID()+name == IDOrName || container.Node.Name()+name == IDOrName {
+			if name == IdOrName || name == "/"+IdOrName || container.Node.ID()+name == IdOrName || container.Node.Name()+name == IdOrName {
 				return container
 			}
 		}
@@ -477,13 +517,13 @@ func (n *node) Images() []*cluster.Image {
 	return images
 }
 
-// Image returns the image with IDOrName in the node
-func (n *node) Image(IDOrName string) *cluster.Image {
+// Image returns the image with IdOrName in the node
+func (n *node) Image(IdOrName string) *cluster.Image {
 	n.RLock()
 	defer n.RUnlock()
 
 	for _, image := range n.images {
-		if image.Match(IDOrName) {
+		if image.Match(IdOrName) {
 			return image
 		}
 	}

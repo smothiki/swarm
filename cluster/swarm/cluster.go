@@ -13,7 +13,6 @@ import (
 	"github.com/samalba/dockerclient"
 )
 
-// Cluster is exported
 type Cluster struct {
 	sync.RWMutex
 
@@ -24,7 +23,6 @@ type Cluster struct {
 	store        *state.Store
 }
 
-// NewCluster is exported
 func NewCluster(scheduler *scheduler.Scheduler, store *state.Store, eventhandler cluster.EventHandler, options *cluster.Options) cluster.Cluster {
 	log.WithFields(log.Fields{"name": "swarm"}).Debug("Initializing cluster")
 
@@ -56,7 +54,7 @@ func NewCluster(scheduler *scheduler.Scheduler, store *state.Store, eventhandler
 	return cluster
 }
 
-// Handle callbacks for the events
+// callback for the events
 func (c *Cluster) Handle(e *cluster.Event) error {
 	if err := c.eventHandler.Handle(e); err != nil {
 		log.Error(err)
@@ -64,18 +62,38 @@ func (c *Cluster) Handle(e *cluster.Event) error {
 	return nil
 }
 
-// CreateContainer aka schedule a brand new container into the cluster.
+// Schedule a brand new container into the cluster.
 func (c *Cluster) CreateContainer(config *dockerclient.ContainerConfig, name string) (*cluster.Container, error) {
-	c.scheduler.Lock()
-	defer c.scheduler.Unlock()
 
+	c.Lock()
+
+	// FIXME: to prevent a race, we check again after the pull if the node can still handle
+	// the container. We should store the state in the store before pulling and use this to check
+	// all the other container create, but, as we don't have a proper store yet, this temporary solution
+	// was chosen.
 	n, err := c.scheduler.SelectNodeForContainer(c.listNodes(), config)
 	if err != nil {
 		return nil, err
 	}
-
 	if nn, ok := n.(*node); ok {
-		container, err := nn.create(config, name, true)
+		nn.addtoQueue(config, name)
+	}
+	c.Unlock()
+	if nn, ok := n.(*node); ok {
+		container, err := nn.create(config, name, false)
+		if err == dockerclient.ErrNotFound {
+			// image not on the node, try to pull
+			if err = nn.pull(config.Image); err != nil {
+				return nil, err
+			}
+
+			// check if the container can still fit on this node
+			if _, err = c.scheduler.SelectNodeForContainer([]cluster.Node{n}, config); err != nil {
+				// if not, try to find another node
+				log.Debugf("Node %s not available anymore, selecting another one", n.Name())
+			}
+			container, err = nn.create(config, name, false)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -91,11 +109,11 @@ func (c *Cluster) CreateContainer(config *dockerclient.ContainerConfig, name str
 	return nil, nil
 }
 
-// RemoveContainer aka Remove a container from the cluster. Containers should
-// always be destroyed through the scheduler to guarantee atomicity.
+// Remove a container from the cluster. Containers should always be destroyed
+// through the scheduler to guarantee atomicity.
 func (c *Cluster) RemoveContainer(container *cluster.Container, force bool) error {
-	c.scheduler.Lock()
-	defer c.scheduler.Unlock()
+	c.Lock()
+	defer c.Unlock()
 
 	if n, ok := container.Node.(*node); ok {
 		if err := n.destroy(container, force); err != nil {
@@ -169,17 +187,17 @@ func (c *Cluster) Images() []*cluster.Image {
 	return out
 }
 
-// Image returns an image with IDOrName in the cluster
-func (c *Cluster) Image(IDOrName string) *cluster.Image {
+// Image returns an image with IdOrName in the cluster
+func (c *Cluster) Image(IdOrName string) *cluster.Image {
 	// Abort immediately if the name is empty.
-	if len(IDOrName) == 0 {
+	if len(IdOrName) == 0 {
 		return nil
 	}
 
 	c.RLock()
 	defer c.RUnlock()
 	for _, n := range c.nodes {
-		if image := n.Image(IDOrName); image != nil {
+		if image := n.Image(IdOrName); image != nil {
 			return image
 		}
 	}
@@ -197,7 +215,6 @@ func (c *Cluster) RemoveImage(image *cluster.Image) ([]*dockerclient.ImageDelete
 	return nil, nil
 }
 
-// Pull is exported
 func (c *Cluster) Pull(name string, callback func(what, status string)) {
 	size := len(c.nodes)
 	done := make(chan bool, size)
@@ -235,17 +252,17 @@ func (c *Cluster) Containers() []*cluster.Container {
 	return out
 }
 
-// Container returns the container with IDOrName in the cluster
-func (c *Cluster) Container(IDOrName string) *cluster.Container {
+// Container returns the container with IdOrName in the cluster
+func (c *Cluster) Container(IdOrName string) *cluster.Container {
 	// Abort immediately if the name is empty.
-	if len(IDOrName) == 0 {
+	if len(IdOrName) == 0 {
 		return nil
 	}
 
 	c.RLock()
 	defer c.RUnlock()
 	for _, n := range c.nodes {
-		if container := n.Container(IDOrName); container != nil {
+		if container := n.Container(IdOrName); container != nil {
 			return container
 		}
 	}
@@ -253,7 +270,7 @@ func (c *Cluster) Container(IDOrName string) *cluster.Container {
 	return nil
 }
 
-// nodes returns all the nodes in the cluster.
+// nodes returns all the nodess in the cluster.
 func (c *Cluster) listNodes() []cluster.Node {
 	c.RLock()
 	defer c.RUnlock()
@@ -266,14 +283,13 @@ func (c *Cluster) listNodes() []cluster.Node {
 	return out
 }
 
-// Info is exported
 func (c *Cluster) Info() [][2]string {
 	info := [][2]string{{"\bNodes", fmt.Sprintf("%d", len(c.nodes))}}
 
 	for _, node := range c.nodes {
 		info = append(info, [2]string{node.Name(), node.Addr()})
 		info = append(info, [2]string{" └ Containers", fmt.Sprintf("%d", len(node.Containers()))})
-		info = append(info, [2]string{" └ Reserved CPUs", fmt.Sprintf("%d / %d", node.UsedCpus(), node.TotalCpus())})
+		info = append(info, [2]string{" └ Reserved CPUs", fmt.Sprintf("%.3f / %d", node.UsedCpus(), node.TotalCpus())})
 		info = append(info, [2]string{" └ Reserved Memory", fmt.Sprintf("%s / %s", units.BytesSize(float64(node.UsedMemory())), units.BytesSize(float64(node.TotalMemory())))})
 	}
 
