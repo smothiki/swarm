@@ -30,6 +30,9 @@ func (f *AffinityFilter) Filter(config *dockerclient.ContainerConfig, nodes []cl
 				for _, container := range node.Containers() {
 					containers = append(containers, container.Id, strings.TrimPrefix(container.Names[0], "/"))
 				}
+				for _, container := range node.ScheduledList("container") {
+					containers = append(containers, container)
+				}
 				if affinity.Match(containers...) {
 					candidates = append(candidates, node)
 				}
@@ -41,6 +44,9 @@ func (f *AffinityFilter) Filter(config *dockerclient.ContainerConfig, nodes []cl
 					for _, tag := range image.RepoTags {
 						images = append(images, strings.Split(tag, ":")[0])
 					}
+				}
+				for _, image := range node.ScheduledList("images") {
+					images = append(images, image)
 				}
 				if affinity.Match(images...) {
 					candidates = append(candidates, node)

@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"container/list"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ func NewNode(addr string, overcommitRatio float64) *node {
 		containers:      make(map[string]*cluster.Container),
 		healthy:         true,
 		overcommitRatio: int64(overcommitRatio * 100),
+		scheduleQueue:   list.New(),
 	}
 	return e
 }
@@ -37,13 +39,14 @@ func NewNode(addr string, overcommitRatio float64) *node {
 type node struct {
 	sync.RWMutex
 
-	id     string
-	ip     string
-	addr   string
-	name   string
-	Cpus   int64
-	Memory int64
-	labels map[string]string
+	id            string
+	ip            string
+	addr          string
+	name          string
+	Cpus          int64
+	Memory        int64
+	labels        map[string]string
+	scheduleQueue *list.List
 
 	ch              chan bool
 	containers      map[string]*cluster.Container
@@ -52,6 +55,12 @@ type node struct {
 	eventHandler    cluster.EventHandler
 	healthy         bool
 	overcommitRatio int64
+}
+
+//more items need to be added here right now works only for affinities and constraints
+type scheduledItem struct {
+	image     string
+	container string
 }
 
 func (n *node) ID() string {
@@ -144,7 +153,7 @@ func (n *node) updateSpecs() error {
 	// Older versions of Docker don't expose the ID field and are not supported
 	// by Swarm.  Catch the error ASAP and refuse to connect.
 	if len(info.ID) == 0 {
-		return fmt.Errorf("node %s is running an unsupported version of Docker Engine. Please upgrade.", n.addr)
+		return fmt.Errorf("node %s is running an unsupported version of Docker Engine. Please upgrade", n.addr)
 	}
 	n.id = info.ID
 	n.name = info.Name
@@ -325,7 +334,7 @@ func (n *node) emitEvent(event string) {
 
 // Return the sum of memory reserved by containers.
 func (n *node) UsedMemory() int64 {
-	var r int64 = 0
+	var r int64
 	n.RLock()
 	for _, c := range n.containers {
 		r += c.Info.Config.Memory
@@ -336,7 +345,7 @@ func (n *node) UsedMemory() int64 {
 
 // Return the sum of CPUs reserved by containers.
 func (n *node) UsedCpus() float64 {
-	var r int64 = 0
+	var r int64
 	n.RLock()
 	for _, c := range n.containers {
 		r += c.Info.Config.CpuShares
@@ -351,6 +360,39 @@ func (n *node) TotalMemory() int64 {
 
 func (n *node) TotalCpus() int64 {
 	return n.Cpus
+}
+
+func (n *node) addtoQueue(config *dockerclient.ContainerConfig, name string) {
+	item := &scheduledItem{
+		image:     config.Image,
+		container: name,
+	}
+	n.scheduleQueue.PushFront(*item)
+}
+
+func (n *node) removeFromQueue(config *dockerclient.ContainerConfig, name string) {
+	for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
+		if e.Value.(*scheduledItem).container == name && e.Value.(*scheduledItem).image == config.Image {
+			n.scheduleQueue.Remove(e)
+		}
+	}
+}
+
+func (n *node) ScheduledList(query string) []string {
+	candidate := make([]string, 1)
+	if query == "container" {
+		for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
+			candidate = append(candidate, e.Value.(*scheduledItem).container)
+		}
+		return candidate
+	}
+	if query == "image" {
+		for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
+			candidate = append(candidate, e.Value.(*scheduledItem).image)
+		}
+		return candidate
+	}
+	return nil
 }
 
 func (n *node) create(config *dockerclient.ContainerConfig, name string, pullImage bool) (*cluster.Container, error) {
@@ -386,6 +428,7 @@ func (n *node) create(config *dockerclient.ContainerConfig, name string, pullIma
 
 	n.RLock()
 	defer n.RUnlock()
+	defer n.removeFromQueue(config, name)
 
 	return n.containers[id], nil
 }

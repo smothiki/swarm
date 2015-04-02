@@ -65,9 +65,8 @@ func (c *Cluster) Handle(e *cluster.Event) error {
 // Schedule a brand new container into the cluster.
 func (c *Cluster) CreateContainer(config *dockerclient.ContainerConfig, name string) (*cluster.Container, error) {
 
-	c.RLock()
-	defer c.RUnlock()
-retry:
+	c.Lock()
+
 	// FIXME: to prevent a race, we check again after the pull if the node can still handle
 	// the container. We should store the state in the store before pulling and use this to check
 	// all the other container create, but, as we don't have a proper store yet, this temporary solution
@@ -76,7 +75,10 @@ retry:
 	if err != nil {
 		return nil, err
 	}
-
+	if nn, ok := n.(*node); ok {
+		nn.addtoQueue(config, name)
+	}
+	c.Unlock()
 	if nn, ok := n.(*node); ok {
 		container, err := nn.create(config, name, false)
 		if err == dockerclient.ErrNotFound {
@@ -89,7 +91,6 @@ retry:
 			if _, err = c.scheduler.SelectNodeForContainer([]cluster.Node{n}, config); err != nil {
 				// if not, try to find another node
 				log.Debugf("Node %s not available anymore, selecting another one", n.Name())
-				goto retry
 			}
 			container, err = nn.create(config, name, false)
 		}

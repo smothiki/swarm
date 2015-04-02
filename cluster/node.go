@@ -13,6 +13,7 @@ type Node interface {
 	Image(IdOrName string) *Image         //used by the filters
 	Containers() []*Container             //used by the filters
 	Container(IdOrName string) *Container //used by the filters
+	ScheduledList(query string) []string  //used by the filters
 
 	TotalCpus() int64   //used by the strategy
 	UsedCpus() float64  //used by the strategy
