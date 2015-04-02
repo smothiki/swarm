@@ -65,7 +65,7 @@ func (c *Cluster) Handle(e *cluster.Event) error {
 // Schedule a brand new container into the cluster.
 func (c *Cluster) CreateContainer(config *dockerclient.ContainerConfig, name string) (*cluster.Container, error) {
 
-	c.Lock()
+	c.scheduler.Lock()
 
 	// FIXME: to prevent a race, we check again after the pull if the node can still handle
 	// the container. We should store the state in the store before pulling and use this to check
@@ -73,12 +73,13 @@ func (c *Cluster) CreateContainer(config *dockerclient.ContainerConfig, name str
 	// was chosen.
 	n, err := c.scheduler.SelectNodeForContainer(c.listNodes(), config)
 	if err != nil {
+		c.scheduler.Unlock()
 		return nil, err
 	}
 	if nn, ok := n.(*node); ok {
 		nn.addtoQueue(config, name)
 	}
-	c.Unlock()
+	c.scheduler.Unlock()
 	if nn, ok := n.(*node); ok {
 		container, err := nn.create(config, name, false)
 		if err == dockerclient.ErrNotFound {

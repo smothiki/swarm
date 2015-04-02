@@ -30,7 +30,8 @@ func (f *AffinityFilter) Filter(config *dockerclient.ContainerConfig, nodes []cl
 				for _, container := range node.Containers() {
 					containers = append(containers, container.Id, strings.TrimPrefix(container.Names[0], "/"))
 				}
-				for _, container := range node.ScheduledList("container") {
+				for i, container := range node.ScheduledList("container") {
+					log.WithFields(log.Fields{"name": "affinuty", "id": i}).Info("inside forloop affinity container:" + container)
 					containers = append(containers, container)
 				}
 				if affinity.Match(containers...) {

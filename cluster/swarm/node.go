@@ -17,7 +17,7 @@ import (
 
 const (
 	// Force-refresh the state of the node this often.
-	stateRefreshPeriod = 30 * time.Second
+	stateRefreshPeriod = 10 * time.Second
 
 	// Timeout for requests sent out to the node.
 	requestTimeout = 10 * time.Second
@@ -368,27 +368,29 @@ func (n *node) addtoQueue(config *dockerclient.ContainerConfig, name string) {
 		container: name,
 	}
 	n.scheduleQueue.PushFront(*item)
+	log.WithFields(log.Fields{"name": n.name, "id": n.id}).Info("inside addtoqueu image:" + config.Image + " container:" + name)
 }
 
 func (n *node) removeFromQueue(config *dockerclient.ContainerConfig, name string) {
 	for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
-		if e.Value.(*scheduledItem).container == name && e.Value.(*scheduledItem).image == config.Image {
+		if e.Value.(scheduledItem).container == name && e.Value.(scheduledItem).image == config.Image {
 			n.scheduleQueue.Remove(e)
 		}
 	}
+	log.WithFields(log.Fields{"name": n.name, "id": n.id}).Info("inside removequeu image:" + config.Image + " container:" + name)
 }
 
 func (n *node) ScheduledList(query string) []string {
 	candidate := make([]string, 1)
 	if query == "container" {
 		for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
-			candidate = append(candidate, e.Value.(*scheduledItem).container)
+			candidate = append(candidate, e.Value.(scheduledItem).container)
 		}
 		return candidate
 	}
 	if query == "image" {
 		for e := n.scheduleQueue.Back(); e != nil; e = e.Prev() {
-			candidate = append(candidate, e.Value.(*scheduledItem).image)
+			candidate = append(candidate, e.Value.(scheduledItem).image)
 		}
 		return candidate
 	}
@@ -414,6 +416,7 @@ func (n *node) create(config *dockerclient.ContainerConfig, name string, pullIma
 		}
 		// Otherwise, try to pull the image...
 		if err = n.pull(config.Image); err != nil {
+			log.WithFields(log.Fields{"name": n.name, "id": n.id}).Info("inside pull image:" + config.Image + " container:" + name)
 			return nil, err
 		}
 		// ...And try again.
@@ -421,14 +424,14 @@ func (n *node) create(config *dockerclient.ContainerConfig, name string, pullIma
 			return nil, err
 		}
 	}
-
+	n.removeFromQueue(config, name)
 	// Register the container immediately while waiting for a state refresh.
 	// Force a state refresh to pick up the newly created container.
+
 	n.refreshContainer(id, true)
 
 	n.RLock()
 	defer n.RUnlock()
-	defer n.removeFromQueue(config, name)
 
 	return n.containers[id], nil
 }
