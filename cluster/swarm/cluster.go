@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/units"
@@ -21,11 +22,19 @@ import (
 type Cluster struct {
 	sync.RWMutex
 
-	eventHandler cluster.EventHandler
-	engines      map[string]*cluster.Engine
-	scheduler    *scheduler.Scheduler
-	options      *cluster.Options
-	store        *state.Store
+	eventHandler   cluster.EventHandler
+	engines        map[string]*cluster.Engine
+	scheduler      *scheduler.Scheduler
+	options        *cluster.Options
+	store          *state.Store
+	metaContainers map[string]*metaContainer
+}
+
+type metaContainer struct {
+	Name    string
+	Config  dockerclient.ContainerConfig
+	Current *cluster.Engine
+	Prev    *cluster.Engine
 }
 
 // NewCluster is exported
@@ -33,10 +42,11 @@ func NewCluster(scheduler *scheduler.Scheduler, store *state.Store, options *clu
 	log.WithFields(log.Fields{"name": "swarm"}).Debug("Initializing cluster")
 
 	cluster := &Cluster{
-		engines:   make(map[string]*cluster.Engine),
-		scheduler: scheduler,
-		options:   options,
-		store:     store,
+		engines:        make(map[string]*cluster.Engine),
+		scheduler:      scheduler,
+		options:        options,
+		store:          store,
+		metaContainers: make(map[string]*metaContainer),
 	}
 
 	// get the list of entries from the discovery service
@@ -52,7 +62,7 @@ func NewCluster(scheduler *scheduler.Scheduler, store *state.Store, options *clu
 
 		}
 		cluster.newEntries(entries)
-
+		go cluster.monitor()
 		go d.Watch(cluster.newEntries)
 	}()
 
@@ -91,12 +101,23 @@ func (c *Cluster) CreateContainer(config *dockerclient.ContainerConfig, name str
 
 	if nn, ok := c.engines[n.ID]; ok {
 		nn.AddtoQueue(config, name)
+		if meta, ok := c.metaContainers[name]; !ok {
+			c.metaContainers[name] = &metaContainer{
+				Name:    name,
+				Config:  *config,
+				Current: nn,
+				Prev:    nn,
+			}
+		} else {
+			meta.Prev = meta.Current
+			meta.Current = nn
+			c.metaContainers[name] = meta
+		}
 		c.scheduler.Unlock()
 		container, err := nn.Create(config, name, true)
 		if err != nil {
 			return nil, err
 		}
-
 		st := &state.RequestedState{
 			ID:     container.Id,
 			Name:   name,
@@ -117,7 +138,7 @@ func (c *Cluster) RemoveContainer(container *cluster.Container, force bool) erro
 	if err := container.Engine.Destroy(container, force); err != nil {
 		return err
 	}
-
+	delete(c.metaContainers, strings.TrimPrefix(container.Names[0], "/"))
 	if err := c.store.Remove(container.Id); err != nil {
 		if err == state.ErrNotFound {
 			log.Debugf("Container %s not found in the store", container.Id)
@@ -279,7 +300,9 @@ func (c *Cluster) listNodes() []*node.Node {
 
 	out := make([]*node.Node, 0, len(c.engines))
 	for _, n := range c.engines {
-		out = append(out, node.NewNode(n))
+		if n.IsHealthy() {
+			out = append(out, node.NewNode(n))
+		}
 	}
 
 	return out
@@ -295,6 +318,70 @@ func (c *Cluster) listEngines() []*cluster.Engine {
 		out = append(out, n)
 	}
 	return out
+}
+
+func (c *Cluster) monitor() {
+	healthy := make(map[string]*cluster.Engine)
+	time.Sleep(5 * time.Second)
+
+	unhealthy := make(map[string]*cluster.Engine)
+	for {
+		for _, n := range c.engines {
+			if n.IsHealthy() {
+				healthy[n.ID] = n
+			} else {
+				unhealthy[n.ID] = n
+			}
+		}
+		time.Sleep(5 * time.Second)
+		log.WithFields(log.Fields{"healthy": len(healthy)}).Info("failing over")
+		log.WithFields(log.Fields{"unhealthy": len(unhealthy)}).Info("failing over")
+		for _, n := range healthy {
+			if !n.IsHealthy() {
+				delete(healthy, n.ID)
+				unhealthy[n.ID] = n
+				log.WithFields(log.Fields{"Node": n.ID}).Info("failing over")
+				go c.failover(n)
+			}
+		}
+		for _, n := range unhealthy {
+			if n.IsHealthy() {
+				delete(unhealthy, n.ID)
+				healthy[n.ID] = n
+				log.WithFields(log.Fields{"Node": n.ID}).Info("adjusting after failover over")
+				go c.adjust(n)
+			}
+		}
+	}
+}
+
+func (c *Cluster) adjust(e *cluster.Engine) {
+	for _, container := range e.Containers() {
+		if meta, ok := c.metaContainers[strings.TrimPrefix(container.Names[0], "/")]; ok {
+			if meta.Prev != meta.Current {
+				meta.Prev.Destroy(meta.Prev.Container(meta.Name), true)
+			}
+			log.WithFields(log.Fields{"Node": e.ID, "container": meta.Name}).Info("deleteing in reschedule container")
+		}
+	}
+}
+
+func (c *Cluster) failover(e *cluster.Engine) {
+	i := 1
+	for ; i <= 2; i++ {
+		time.Sleep(time.Duration(5*i) * time.Second)
+		if e.IsHealthy() {
+			break
+		}
+	}
+	if !e.IsHealthy() {
+		for _, container := range e.Containers() {
+			if meta, ok := c.metaContainers[strings.TrimPrefix(container.Names[0], "/")]; ok {
+				c.CreateContainer(&meta.Config, meta.Name)
+				log.WithFields(log.Fields{"Node": e.ID, "container": meta.Name}).Info("rescheduling container")
+			}
+		}
+	}
 }
 
 // Info is exported

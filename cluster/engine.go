@@ -16,7 +16,7 @@ import (
 
 const (
 	// Force-refresh the state of the engine this often.
-	stateRefreshPeriod = 30 * time.Second
+	stateRefreshPeriod = 10 * time.Second
 
 	// Timeout for requests sent out to the engine.
 	requestTimeout = 10 * time.Second
@@ -401,7 +401,10 @@ func (e *Engine) Create(config *dockerclient.ContainerConfig, name string, pullI
 			return nil, err
 		}
 	}
-
+	err = client.StartContainer(id, nil)
+	if err != nil {
+		return nil, err
+	}
 	// Register the container immediately while waiting for a state refresh.
 	// Force a state refresh to pick up the newly created container.
 	e.refreshContainer(id, true)
