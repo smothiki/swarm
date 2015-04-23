@@ -334,8 +334,6 @@ func (c *Cluster) monitor() {
 			}
 		}
 		time.Sleep(5 * time.Second)
-		log.WithFields(log.Fields{"healthy": len(healthy)}).Info("failing over")
-		log.WithFields(log.Fields{"unhealthy": len(unhealthy)}).Info("failing over")
 		for _, n := range healthy {
 			if !n.IsHealthy() {
 				delete(healthy, n.ID)
@@ -345,6 +343,7 @@ func (c *Cluster) monitor() {
 			}
 		}
 		for _, n := range unhealthy {
+			log.WithFields(log.Fields{"unhealthy": len(unhealthy)}).Info("unhealthy nodes")
 			if n.IsHealthy() {
 				delete(unhealthy, n.ID)
 				healthy[n.ID] = n
@@ -398,7 +397,7 @@ func (c *Cluster) Info() [][2]string {
 	for _, engine := range engines {
 		info = append(info, [2]string{engine.Name, engine.Addr})
 		info = append(info, [2]string{" └ Containers", fmt.Sprintf("%d", len(engine.Containers()))})
-		info = append(info, [2]string{" └ Reserved CPUs", fmt.Sprintf("%d / %d", engine.UsedCpus(), engine.TotalCpus())})
+		info = append(info, [2]string{" └ Reserved CPUs", fmt.Sprintf("%f / %d", engine.UsedCpus(), engine.TotalCpus())})
 		info = append(info, [2]string{" └ Reserved Memory", fmt.Sprintf("%s / %s", units.BytesSize(float64(engine.UsedMemory())), units.BytesSize(float64(engine.TotalMemory())))})
 		labels := make([]string, 0, len(engine.Labels))
 		for k, v := range engine.Labels {

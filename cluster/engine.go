@@ -258,7 +258,6 @@ func (e *Engine) updateContainer(c dockerclient.Container, containers map[string
 		}
 		container.Info = *info
 		// real CpuShares -> nb of CPUs
-		container.Info.Config.CpuShares = container.Info.Config.CpuShares * 1024.0 / e.Cpus
 	}
 
 	// Update its internal state.
@@ -337,14 +336,14 @@ func (e *Engine) UsedMemory() int64 {
 }
 
 // UsedCpus returns the sum of CPUs reserved by containers.
-func (e *Engine) UsedCpus() int64 {
+func (e *Engine) UsedCpus() float64 {
 	var r int64
 	e.RLock()
 	for _, c := range e.containers {
 		r += c.Info.Config.CpuShares
 	}
 	e.RUnlock()
-	return r
+	return float64(r*e.Cpus) / 1024
 }
 
 // TotalMemory returns the total memory + overcommit
@@ -354,7 +353,7 @@ func (e *Engine) TotalMemory() int64 {
 
 // TotalCpus returns the total cpus + overcommit
 func (e *Engine) TotalCpus() int64 {
-	return e.Cpus + (e.Cpus * e.overcommitRatio / 100)
+	return e.Cpus
 }
 
 //AddtoQueue adds a scheduled item to scheduled queue
@@ -385,7 +384,7 @@ func (e *Engine) Create(config *dockerclient.ContainerConfig, name string, pullI
 	newConfig := *config
 	defer e.removeFromQueue(config, name)
 	// nb of CPUs -> real CpuShares
-	newConfig.CpuShares = config.CpuShares * 1024 / e.Cpus
+	newConfig.CpuShares = config.CpuShares
 
 	if id, err = client.CreateContainer(&newConfig, name); err != nil {
 		// If the error is other than not found, abort immediately.

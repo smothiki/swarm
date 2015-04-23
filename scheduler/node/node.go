@@ -21,7 +21,7 @@ type Node struct {
 	Images     []*cluster.Image
 
 	UsedMemory  int64
-	UsedCpus    int64
+	UsedCpus    float64
 	TotalMemory int64
 	TotalCpus   int64
 
@@ -103,7 +103,7 @@ func (n *Node) AddContainer(container *cluster.Container) error {
 			return errors.New("not enough resources")
 		}
 		n.UsedMemory = n.UsedMemory + memory
-		n.UsedCpus = n.UsedCpus + cpus
+		n.UsedCpus = n.UsedCpus + float64(cpus)
 	}
 	n.Containers = append(n.Containers, container)
 	return nil
