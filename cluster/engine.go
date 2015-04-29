@@ -278,9 +278,9 @@ func (e *Engine) refreshLoop() {
 		var err error
 		select {
 		case <-e.ch:
-			err = e.refreshContainers(false)
+			err = e.refreshContainers(true)
 		case <-time.After(stateRefreshPeriod):
-			err = e.refreshContainers(false)
+			err = e.refreshContainers(true)
 		}
 
 		if err == nil {

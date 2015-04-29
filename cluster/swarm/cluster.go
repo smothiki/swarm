@@ -375,9 +375,11 @@ func (c *Cluster) failover(e *cluster.Engine) {
 	}
 	if !e.IsHealthy() {
 		for _, container := range e.Containers() {
-			if meta, ok := c.metaContainers[strings.TrimPrefix(container.Names[0], "/")]; ok {
-				c.CreateContainer(&meta.Config, meta.Name)
-				log.WithFields(log.Fields{"Node": e.ID, "container": meta.Name}).Info("rescheduling container")
+			if container.Info.State.Running {
+				if meta, ok := c.metaContainers[strings.TrimPrefix(container.Names[0], "/")]; ok {
+					c.CreateContainer(&meta.Config, meta.Name)
+					log.WithFields(log.Fields{"Node": e.ID, "container": meta.Name}).Info("rescheduling container")
+				}
 			}
 		}
 	}
