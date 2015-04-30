@@ -63,6 +63,8 @@ type Engine struct {
 type ScheduledItem struct {
 	Image     string
 	Container string
+	CPUShares int64
+	Memory    int64
 }
 
 // Connect will initialize a connection to the Docker daemon running on the
@@ -329,7 +331,12 @@ func (e *Engine) UsedMemory() int64 {
 	var r int64
 	e.RLock()
 	for _, c := range e.containers {
-		r += c.Info.Config.Memory
+		if c.Info.State.Running {
+			r += c.Info.Config.Memory
+		}
+	}
+	for i := e.ScheduleQueue.Back(); i != nil; i = i.Prev() {
+		r += i.Value.(ScheduledItem).Memory
 	}
 	e.RUnlock()
 	return r
@@ -340,7 +347,12 @@ func (e *Engine) UsedCpus() float64 {
 	var r int64
 	e.RLock()
 	for _, c := range e.containers {
-		r += c.Info.Config.CpuShares
+		if c.Info.State.Running {
+			r += c.Info.Config.CpuShares
+		}
+	}
+	for i := e.ScheduleQueue.Back(); i != nil; i = i.Prev() {
+		r += i.Value.(ScheduledItem).CPUShares
 	}
 	e.RUnlock()
 	return float64(r*e.Cpus) / 1024
@@ -361,6 +373,8 @@ func (e *Engine) AddtoQueue(config *dockerclient.ContainerConfig, name string) {
 	item := &ScheduledItem{
 		Image:     config.Image,
 		Container: name,
+		CPUShares: config.CpuShares,
+		Memory:    config.Memory,
 	}
 	e.ScheduleQueue.PushFront(*item)
 }
