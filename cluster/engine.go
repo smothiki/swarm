@@ -414,10 +414,6 @@ func (e *Engine) Create(config *dockerclient.ContainerConfig, name string, pullI
 			return nil, err
 		}
 	}
-	err = client.StartContainer(id, &newConfig.HostConfig)
-	if err != nil {
-		return nil, err
-	}
 	// Register the container immediately while waiting for a state refresh.
 	// Force a state refresh to pick up the newly created container.
 	e.refreshContainer(id, true)
@@ -425,6 +421,14 @@ func (e *Engine) Create(config *dockerclient.ContainerConfig, name string, pullI
 	defer e.RUnlock()
 
 	return e.containers[id], nil
+}
+
+//Start starts a docker container
+func (e *Engine) Start(container *Container, config *dockerclient.HostConfig) error {
+	if err := e.client.StartContainer(container.Id, config); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Destroy and remove a container from the engine.

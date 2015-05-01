@@ -31,10 +31,11 @@ type Cluster struct {
 }
 
 type metaContainer struct {
-	Name    string
-	Config  dockerclient.ContainerConfig
-	Current *cluster.Engine
-	Prev    *cluster.Engine
+	Name       string
+	Config     dockerclient.ContainerConfig
+	HostConfig dockerclient.HostConfig
+	Current    *cluster.Engine
+	Prev       *cluster.Engine
 }
 
 // NewCluster is exported
@@ -233,6 +234,20 @@ func (c *Cluster) RemoveImage(image *cluster.Image) ([]*dockerclient.ImageDelete
 	return image.Engine.RemoveImage(image)
 }
 
+// Start starts  a container
+func (c *Cluster) Start(name string, config *dockerclient.HostConfig) error {
+	c.Lock()
+	defer c.Unlock()
+	container := c.Container(name)
+	meta, ok := c.metaContainers[name]
+	if !ok {
+		return nil
+	}
+	meta.HostConfig = *config
+	c.metaContainers[name] = meta
+	return container.Engine.Start(container, config)
+}
+
 // Pull is exported
 func (c *Cluster) Pull(name string, callback func(what, status string)) {
 	var wg sync.WaitGroup
@@ -378,6 +393,7 @@ func (c *Cluster) failover(e *cluster.Engine) {
 			if container.Info.State.Running {
 				if meta, ok := c.metaContainers[strings.TrimPrefix(container.Names[0], "/")]; ok {
 					c.CreateContainer(&meta.Config, meta.Name)
+					c.Start(meta.Name, &meta.HostConfig)
 					log.WithFields(log.Fields{"Node": e.ID, "container": meta.Name}).Info("rescheduling container")
 				}
 			}
