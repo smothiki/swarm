@@ -414,7 +414,7 @@ func (e *Engine) Create(config *dockerclient.ContainerConfig, name string, pullI
 			return nil, err
 		}
 	}
-	err = client.StartContainer(id, nil)
+	err = client.StartContainer(id, &newConfig.HostConfig)
 	if err != nil {
 		return nil, err
 	}
