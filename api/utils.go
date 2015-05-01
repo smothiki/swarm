@@ -73,6 +73,7 @@ func proxyAsync(tlsConfig *tls.Config, addr string, w http.ResponseWriter, r *ht
 	r.URL.Host = addr
 
 	log.WithFields(log.Fields{"method": r.Method, "url": r.URL}).Debug("Proxy request")
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL}).Info(r.Body)
 	resp, err := client.Do(r)
 	if err != nil {
 		return err

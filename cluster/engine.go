@@ -399,6 +399,7 @@ func (e *Engine) Create(config *dockerclient.ContainerConfig, name string, pullI
 	defer e.removeFromQueue(config, name)
 	// nb of CPUs -> real CpuShares
 	newConfig.CpuShares = config.CpuShares
+	log.WithFields(log.Fields{"name": e.Name, "id": e.ID}).Info(config)
 
 	if id, err = client.CreateContainer(&newConfig, name); err != nil {
 		// If the error is other than not found, abort immediately.
