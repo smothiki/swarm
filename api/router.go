@@ -57,7 +57,7 @@ var routes = map[string]map[string]handler{
 		"/containers/{name:.*}/unpause": proxyContainer,
 		"/containers/{name:.*}/rename":  proxyContainer,
 		"/containers/{name:.*}/restart": proxyContainer,
-		"/containers/{name:.*}/start":   postContainersStart,
+		"/containers/{name:.*}/start":   proxyContainer,
 		"/containers/{name:.*}/stop":    proxyContainer,
 		"/containers/{name:.*}/wait":    proxyContainer,
 		"/containers/{name:.*}/resize":  proxyContainer,

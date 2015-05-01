@@ -234,18 +234,17 @@ func (c *Cluster) RemoveImage(image *cluster.Image) ([]*dockerclient.ImageDelete
 	return image.Engine.RemoveImage(image)
 }
 
-// Start starts  a container
+//Start a container
 func (c *Cluster) Start(name string, config *dockerclient.HostConfig) error {
 	c.Lock()
 	defer c.Unlock()
-	container := c.Container(name)
+	//container := c.Container(name)
 	meta, ok := c.metaContainers[name]
 	if !ok {
 		return nil
 	}
-	meta.HostConfig = *config
 	c.metaContainers[name] = meta
-	return container.Engine.Start(container, config)
+	return meta.Current.Start(meta.Name)
 }
 
 // Pull is exported

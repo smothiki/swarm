@@ -12,9 +12,6 @@ type Cluster interface {
 	// Remove a container
 	RemoveContainer(container *Container, force bool) error
 
-	//Start a container
-	Start(name string, config *dockerclient.HostConfig) error
-
 	// Return all images
 	Images() []*Image
 

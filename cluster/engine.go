@@ -424,8 +424,8 @@ func (e *Engine) Create(config *dockerclient.ContainerConfig, name string, pullI
 }
 
 //Start starts a docker container
-func (e *Engine) Start(container *Container, config *dockerclient.HostConfig) error {
-	if err := e.client.StartContainer(container.Id, config); err != nil {
+func (e *Engine) Start(name string) error {
+	if err := e.client.StartContainer(name, nil); err != nil {
 		return err
 	}
 	return nil

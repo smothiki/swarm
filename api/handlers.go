@@ -220,28 +220,6 @@ func postContainersCreate(c *context, w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-// POST /containers/start
-func postContainersStart(c *context, w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	var (
-		config dockerclient.HostConfig
-		name   = r.Form.Get("name")
-	)
-
-	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
-		httpError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if err := c.cluster.Start(name, &config); err != nil {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "{%q:%q}", "name", name)
-	return
-}
-
 // DELETE /containers/{name:.*}
 func deleteContainers(c *context, w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
